@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+
+# 本地工具配置
+.claude/
+
+# 业务数据（店铺报表、成本表、打包结果）一律不入库
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.zip
+~$*
+
+# 各脚本的输入 / 输出目录
+Shopee/Shopee_Data*/
+Shopee/output*/
+Shopee_bigseller/Shopee_wanshan/ShopeeDeal/
+Shopee_bigseller/Shopee_wanshan/output*/
+TK no horse/TKdeal*/
+TK no horse/output*/
+TK_Bigseller/TKdeal/
+TK_Bigseller/output/
+填表/*/数据源/
+填表/*/输出/
+格式化/deal/
+格式化/output/
