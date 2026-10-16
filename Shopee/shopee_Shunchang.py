@@ -28,8 +28,8 @@ OUTPUT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output
 COST_FILE_NAME = '顺昌商品成本.xlsx'
 
 # 3. 参数配置
-PH_EXCHANGE_RATE = 0.10871       # 1 PHP = 0.10871 CNY
-ID_EXCHANGE_RATE = 0.000375636   # 1 IDR = 0.000375636 CNY
+PH_EXCHANGE_RATE = 0.1065        # 1 PHP = 0.1065 CNY
+ID_EXCHANGE_RATE = 0.0003754     # 1 IDR = 0.0003754 CNY
 MY_EXCHANGE_RATE = 1.6373        # 1 MYR = 1.6373 CNY
 ID_ADS_MULTIPLIER = 1.11         # 印尼广告费税费系数
 MY_SKU_UNIT_COST = 8.0       # 马来每个基础 SKU 的人民币成本
@@ -286,6 +286,12 @@ def process_single_file(source_path, cost_map):
             missing_skus.update(missing)
         if missing_skus:
             print(f"   [警告] 成本表缺少 SKU: {', '.join(sorted(missing_skus))}（对应成本按 0 计算）")
+    missing_cost_ids = set()
+    if market != 'MY':
+        for _, r_ in df_order_dec.iterrows():
+            s_ = str(r_[sku_col]).strip() if pd.notna(r_[sku_col]) else ''
+            if not s_ or s_.lower() == 'nan' or resolve_cost(s_, cost_map)[1]:
+                missing_cost_ids.add(r_['Order ID'])
     track_col = next((c for c in df_order_dec.columns if 'Tracking' in c), 'Tracking Number*')
     status_col = 'Order Status'
 
@@ -416,10 +422,19 @@ def process_single_file(source_path, cost_map):
     c_tax = next((c for c in all_cols if 'Withholding Tax' in c), None)
     total_tax_php = df_income_dec[c_tax].apply(clean_currency).sum() if c_tax else 0
 
-    ads_col = next((c for c in df_ads.columns if '花费' in c or 'Expense' in c or 'Amount' in c), None)
-    ads_sum = df_ads[ads_col].apply(clean_currency).sum() if ads_col else 0
+    ads_sum = 0.0
+    ads_sheet = next((n for n in SHEET_NAMES['ads'] if n in xls.sheet_names), None)
+    if ads_sheet:
+        ws_ads = openpyxl.load_workbook(source_path, data_only=True)[ads_sheet]
+        hdr = next((r for r in range(1, min(ws_ads.max_row, 20) + 1)
+                    if str(ws_ads.cell(r, 4).value or '').strip().lower() in ('总额', 'amount', '花费', 'expense')), None)
+        if hdr is None:
+            raise ValueError('广告表D列找不到 总额/Amount 表头')
+        ads_sum = sum(ws_ads.cell(r, 4).value for r in range(hdr + 1, ws_ads.max_row + 1)
+                      if isinstance(ws_ads.cell(r, 4).value, (int, float)) and not isinstance(ws_ads.cell(r, 4).value, bool))
+        print(f"   广告表D列总额合计: {ads_sum:.2f} {currency}")
     ads_cny = (abs(ads_sum) * ID_ADS_MULTIPLIER * exchange_rate
-               if market == 'ID' else ads_sum * exchange_rate)
+               if market == 'ID' else abs(ads_sum) * exchange_rate)
 
     # 补单汇率差：直接用Python计算（垫付小计 - 汇率 × 垫付成本）
     brush_comm = 0
@@ -523,6 +538,9 @@ def process_single_file(source_path, cost_map):
                     ws_sales.cell(r, c).fill = green_fill
 
             for c in range(1, 13): safe_border(ws_sales, r, c)
+            if not is_brush and row['订单号'] in missing_cost_ids:
+                for c in range(1, 13):
+                    ws_sales.cell(r, c).fill = yellow_fill
 
         last_sales_row = len(df_sales_detail) + 1
 
