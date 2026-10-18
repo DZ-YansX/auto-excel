@@ -28,9 +28,9 @@ OUTPUT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output
 COST_FILE_NAME = '顺昌商品成本.xlsx'
 
 # 3. 参数配置
-PH_EXCHANGE_RATE = 0.10871       # 1 PHP = 0.10871 CNY
-ID_EXCHANGE_RATE = 0.000375636   # 1 IDR = 0.000375636 CNY
-MY_EXCHANGE_RATE = 1.6373        # 1 MYR = 1.6373 CNY
+PH_EXCHANGE_RATE = 0.1065        # 1 PHP = 0.1065 CNY
+ID_EXCHANGE_RATE = 0.0003754     # 1 IDR = 0.0003754 CNY
+MY_EXCHANGE_RATE = 1.629         # 1 MYR = 1.629 CNY
 ID_ADS_MULTIPLIER = 1.11         # 印尼广告费税费系数
 MY_SKU_UNIT_COST = 8.0       # 马来每个基础 SKU 的人民币成本
 UNIT_FEE = 3.0          # 发单费/空包费单价
@@ -116,12 +116,29 @@ def normalize_indonesia_order(df):
     }
     return df.rename(columns={k: v for k, v in aliases.items() if k in df.columns})
 
+def normalize_indonesia_income(df):
+    """印尼账单可能导出为印尼语表头，统一为英文字段名（列顺序不变）。"""
+    aliases = {
+        'No. Pesanan': 'Order ID',
+        'Waktu Pesanan Dibuat': 'Order Creation Date',
+        'Total Penghasilan': 'Total Released Amount (Rp)',
+        'Harga Produk': 'Product Price',
+        'Jumlah Pengembalian Dana ke Pembeli': 'Refund Amount',
+        'Ongkir Dibayar Pembeli': 'Shipping Fee Paid by Buyer',
+        'Voucher disponsor oleh Penjual': 'Voucher Sponsored by Seller',
+        'Diskon Produk dari Shopee': 'Rebate Provided by Shopee',
+        'Biaya Isi Saldo Otomatis (dari Penghasilan)': 'Ads Escrow Top Up Fee',
+        'PPh 22': 'WHT 22',
+    }
+    return df.rename(columns={k: v for k, v in aliases.items() if k in df.columns})
+
 def resolve_cost(sku, cost_map):
     """按成本表解析单件/倍数/组合 SKU，返回（成本，缺失基础SKU）。"""
     text = str(sku or '').strip()
     if not text or text.lower() == 'nan':
         return 0.0, []
-    text = re.sub(r'[\r\n]+\s*\*\s*(\d+)', r'*\1', text)
+    text = text.replace('×', '*').replace('＊', '*').replace('＋', '+')
+    text = re.sub(r'\s*\*\s*(\d+)', r'*\1', text)
     if text in cost_map:
         return cost_map[text], []
     # 成本表有时只给出 SKU*n 的总价；输入为基础 SKU 时按倍数反推单件价。
@@ -183,6 +200,25 @@ def malaysia_sku_count(sku):
         total += int(match.group(1)) if match else 1
     return total
 
+ADS_AMOUNT_HEADERS = ('花费', '总额', 'Amount', 'Jumlah')
+
+def load_ads_amount(excel_file):
+    """读取广告表金额列合计，返回 (合计, 是否旧版“花费”报表)。
+    新版为广告交易历史记录（总额/Amount/Jumlah 为负数扣费，含正数返还），取净额。"""
+    sheet_name = next((n for n in SHEET_NAMES['ads'] if n in excel_file.sheet_names), None)
+    if not sheet_name:
+        return 0.0, False
+    raw = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, dtype=str)
+    for idx, row in raw.head(20).iterrows():
+        cells = [str(v).strip() for v in row.values]
+        for key in ADS_AMOUNT_HEADERS:
+            if key in cells:
+                col = cells.index(key)
+                total = raw.iloc[idx + 1:, col].apply(clean_currency).sum()
+                return total, key == '花费'
+    print("   [警告] 广告表找不到金额列（花费/总额/Amount/Jumlah），广告费按 0 计算")
+    return 0.0, False
+
 def safe_border(ws, row_idx, col_idx):
     """安全地给单元格加边框"""
     thin = Side(border_style="thin", color="000000")
@@ -218,12 +254,13 @@ def process_single_file(source_path, cost_map):
         df_income = normalize_malaysia_income(df_income)
     elif market == 'ID':
         df_order = normalize_indonesia_order(df_order)
+        df_income = normalize_indonesia_income(df_income)
     if 'Order ID' not in df_order.columns and len(df_order.columns):
         first_col = df_order.columns[0]
         if pd.isna(first_col) or str(first_col).startswith('Unnamed'):
             df_order.rename(columns={first_col: 'Order ID'}, inplace=True)
     df_brush = load_and_clean_sheet(xls, SHEET_NAMES['brush'], ['线上单号', '佣金'])
-    df_ads = load_and_clean_sheet(xls, SHEET_NAMES['ads'], ['Amount'] if market == 'ID' else ['花费'])
+    ads_sum, ads_is_spend_report = load_ads_amount(xls)
 
     if df_order.empty or df_income.empty:
         print("   [跳过] 缺少订单或收入明细表")
@@ -416,10 +453,11 @@ def process_single_file(source_path, cost_map):
     c_tax = next((c for c in all_cols if 'Withholding Tax' in c), None)
     total_tax_php = df_income_dec[c_tax].apply(clean_currency).sum() if c_tax else 0
 
-    ads_col = next((c for c in df_ads.columns if '花费' in c or 'Expense' in c or 'Amount' in c), None)
-    ads_sum = df_ads[ads_col].apply(clean_currency).sum() if ads_col else 0
-    ads_cny = (abs(ads_sum) * ID_ADS_MULTIPLIER * exchange_rate
-               if market == 'ID' else ads_sum * exchange_rate)
+    ads_cny = abs(ads_sum) * exchange_rate
+    if market == 'ID':
+        ads_cny *= ID_ADS_MULTIPLIER
+    elif ads_is_spend_report:
+        ads_cny = ads_sum * exchange_rate
 
     # 补单汇率差：直接用Python计算（垫付小计 - 汇率 × 垫付成本）
     brush_comm = 0
@@ -611,8 +649,6 @@ def process_single_file(source_path, cost_map):
                             ws_pnl.cell(row=cell_a.row, column=target_col).value = val_map[key]
                         break
 
-                if "未匹配" in cell_val_str or "补充" in cell_val_str:
-                    cell_a.value = f"未匹配说明：取消已发货 {metrics['cancel_shipped']} 单，取消未发货 {metrics['cancel_unshipped']} 单"
 
             if '其中:补单金额' not in row_idx_map and '补单金额' in row_idx_map:
                 row_idx_map['其中:补单金额'] = row_idx_map['补单金额']
@@ -647,6 +683,18 @@ def process_single_file(source_path, cost_map):
             profit_key = '本期利润' if '本期利润' in row_idx_map else '毛利润'
             if profit_key in row_idx_map:
                 ws_pnl[get_cell(profit_key)] = f"={get_cell('实际主营收入')}-{get_cell('实际主营成本')}-{get_cell('营业费用')}"
+
+            # 备注：按月追加“{月}月未匹配”，保留以前月份的备注
+            note = (f"{cur_month}月未匹配：取消已发货{metrics['cancel_shipped']}，"
+                    f"取消未发货{metrics['cancel_unshipped']}")
+            note_row = None
+            start = row_idx_map.get(profit_key, 2) + 1
+            for r in range(start, ws_pnl.max_row + 2):
+                lab = str(ws_pnl.cell(r, 1).value or '').strip()
+                if lab == '' or lab.startswith(f"{cur_month}月未匹配") or lab.startswith('未匹配说明'):
+                    note_row = r
+                    break
+            ws_pnl.cell(note_row, 1).value = note
 
         # --- D. 处理"未匹配" ---
         un_sheet_name = None
