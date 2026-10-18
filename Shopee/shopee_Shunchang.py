@@ -31,7 +31,6 @@ COST_FILE_NAME = '顺昌商品成本.xlsx'
 PH_EXCHANGE_RATE = 0.1065        # 1 PHP = 0.1065 CNY
 ID_EXCHANGE_RATE = 0.0003754     # 1 IDR = 0.0003754 CNY
 MY_EXCHANGE_RATE = 1.629         # 1 MYR = 1.629 CNY
-ID_ADS_MULTIPLIER = 1.11         # 印尼广告费税费系数
 MY_SKU_UNIT_COST = 8.0       # 马来每个基础 SKU 的人民币成本
 UNIT_FEE = 3.0          # 发单费/空包费单价
 
@@ -200,24 +199,22 @@ def malaysia_sku_count(sku):
         total += int(match.group(1)) if match else 1
     return total
 
-ADS_AMOUNT_HEADERS = ('花费', '总额', 'Amount', 'Jumlah')
+ADS_HEADER_KEYS = ('总额', 'Amount', 'Jumlah', '花费')
 
 def load_ads_amount(excel_file):
-    """读取广告表金额列合计，返回 (合计, 是否旧版“花费”报表)。
-    新版为广告交易历史记录（总额/Amount/Jumlah 为负数扣费，含正数返还），取净额。"""
+    """广告表 D 列（总额）求和；从表头行下一行开始累加。"""
     sheet_name = next((n for n in SHEET_NAMES['ads'] if n in excel_file.sheet_names), None)
     if not sheet_name:
-        return 0.0, False
+        return 0.0
     raw = pd.read_excel(excel_file, sheet_name=sheet_name, header=None, dtype=str)
+    if raw.shape[1] < 4:
+        return 0.0
+    start = 0
     for idx, row in raw.head(20).iterrows():
-        cells = [str(v).strip() for v in row.values]
-        for key in ADS_AMOUNT_HEADERS:
-            if key in cells:
-                col = cells.index(key)
-                total = raw.iloc[idx + 1:, col].apply(clean_currency).sum()
-                return total, key == '花费'
-    print("   [警告] 广告表找不到金额列（花费/总额/Amount/Jumlah），广告费按 0 计算")
-    return 0.0, False
+        if any(str(v).strip() in ADS_HEADER_KEYS for v in row.values):
+            start = idx + 1
+            break
+    return raw.iloc[start:, 3].apply(clean_currency).sum()
 
 def safe_border(ws, row_idx, col_idx):
     """安全地给单元格加边框"""
@@ -260,7 +257,7 @@ def process_single_file(source_path, cost_map):
         if pd.isna(first_col) or str(first_col).startswith('Unnamed'):
             df_order.rename(columns={first_col: 'Order ID'}, inplace=True)
     df_brush = load_and_clean_sheet(xls, SHEET_NAMES['brush'], ['线上单号', '佣金'])
-    ads_sum, ads_is_spend_report = load_ads_amount(xls)
+    ads_sum = load_ads_amount(xls)
 
     if df_order.empty or df_income.empty:
         print("   [跳过] 缺少订单或收入明细表")
@@ -453,11 +450,8 @@ def process_single_file(source_path, cost_map):
     c_tax = next((c for c in all_cols if 'Withholding Tax' in c), None)
     total_tax_php = df_income_dec[c_tax].apply(clean_currency).sum() if c_tax else 0
 
+    # 广告费 = 广告表 D 列总额求和取正数 × 各国汇率
     ads_cny = abs(ads_sum) * exchange_rate
-    if market == 'ID':
-        ads_cny *= ID_ADS_MULTIPLIER
-    elif ads_is_spend_report:
-        ads_cny = ads_sum * exchange_rate
 
     # 补单汇率差：直接用Python计算（垫付小计 - 汇率 × 垫付成本）
     brush_comm = 0
