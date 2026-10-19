@@ -63,7 +63,7 @@ TARGET_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Shopee
 OUTPUT_FOLDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output_Shanya')
 
 # 2. 唯一成本表文件名（销售明细、利润表和未匹配统一使用）
-COST_FILE_PATTERN = '山亚*成本.xlsx'   # 兼容 山亚产品成本 / 山亚商品成本
+COST_FILE_PATTERN = '山亚*成本*.xlsx'  # 兼容 山亚产品成本 / 山亚商品成本 / 山亚成本价
 
 # 3. 参数配置
 EXCHANGE_RATE = 0.2011    # 1 THB = 0.2011 CNY（2026-09 口径）
