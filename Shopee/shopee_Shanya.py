@@ -617,14 +617,19 @@ def process_single_file(source_path, cost_map):
         write_agg('实际主营成本', plus=['实际产品成本', '发单费'])
         write_agg('推广费用', plus=['广告费', '补单佣金', '补单平台费用', '补单汇率差额', '补单空包费'])
         write_agg('shopee结算', plus=['平台费用', '预扣税'])
-        if '货损费用' in row_idx:
-            if ws_pnl.cell(row_idx['货损费用'], target_col).value is None:
-                ws_pnl.cell(row_idx['货损费用'], target_col).value = 0
-            write_agg('团队运营费用', plus=['货损费用'])
-        elif '团队运营费用' in row_idx:
-            ws_pnl.cell(row_idx['团队运营费用'], target_col).value = 0
-        write_agg('营业费用', plus=['推广费用', 'shopee结算', '团队运营费用'])
+        # 团队运营费用 = 其下所有子项（货损费用 / 补发费用 等，名称因店而异）之和
         profit_key = '本期利润' if '本期利润' in row_idx else ('毛利润' if '毛利润' in row_idx else None)
+        if '团队运营费用' in row_idx:
+            team_r = row_idx['团队运营费用']
+            end_r = row_idx[profit_key] if profit_key else ws_pnl.max_row + 1
+            sub_rows = [r for r in range(team_r + 1, end_r)
+                        if str(ws_pnl.cell(r, 1).value or '').strip()]
+            for r in sub_rows:
+                if ws_pnl.cell(r, target_col).value is None:
+                    ws_pnl.cell(r, target_col).value = 0
+            ws_pnl.cell(team_r, target_col).value = (
+                '=' + '+'.join(f'{tcl}{r}' for r in sub_rows) if sub_rows else 0)
+        write_agg('营业费用', plus=['推广费用', 'shopee结算', '团队运营费用'])
         if profit_key:
             write_agg(profit_key, plus=['实际主营收入'], minus=['实际主营成本', '营业费用'])
 
