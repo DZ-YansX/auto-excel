@@ -110,6 +110,7 @@ python format_workbooks.py                    # 默认 --input deal --output out
 ## 注意事项
 
 - 账单表头可能是中文、英文或印尼语，列名也会随平台改版变化；如果销售额 / 成本整列变成 0，先检查表头别名（`BILL_COL_ALIASES` 等）是否需要补充。
+  `TK_Bigseller.py` 遇到认不出的表头、未配置汇率的币种或缺 sheet 会直接报 `[失败]` 并说明原因，不会生成输出文件。
 - 菲律宾 TK 订单明细日期是美式 `MM/DD/YYYY h:mm:ss AM/PM`，其它国家为 `DD/MM/YYYY`。
 - 当地时间月末最后几个小时下的订单，大卖家按北京时间导出时会被划到下个月，导致这些订单没有成本，需要手工补。
 - 跑完后建议核对：销售明细每行 E+F+G 应等于账单「总收入 / Total Revenue」。
