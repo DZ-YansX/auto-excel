@@ -27,6 +27,7 @@ from collections import Counter, defaultdict
 from copy import copy
 
 import openpyxl
+import openpyxl.utils
 from openpyxl.styles import Font, PatternFill
 from openpyxl.styles.colors import COLOR_INDEX
 
@@ -393,14 +394,35 @@ def detect_files(args):
 def locate_fill_columns(worksheet):
     headers = header_row(worksheet)
     header_names = {text for _, text in headers}
-    required = {"订单号", "BigSeller店铺", "店铺SKU", "数量", "商品成本", "总成本价"}
+    required = {"订单号", "BigSeller店铺", "店铺SKU", "数量", "商品成本"}
     missing = sorted(required - header_names)
     if missing:
         raise ValueError(f"大卖家表缺少必要列：{missing}")
-    return {
+    columns = {
         key: find_col(headers, FILL_COL_CANDIDATES[key], FILL_COL_FALLBACK[key])
         for key in FILL_COL_CANDIDATES
     }
+    if "总成本价" not in header_names:
+        columns["total"] = add_total_column(worksheet, columns["cost"])
+    return columns
+
+
+def add_total_column(worksheet, cost_col):
+    # 部分导出没有“总成本价”，而 Shopee_BigSeller.py 优先读这一列。
+    total_col = max(index for index, text in header_row(worksheet) if text) + 1
+    for row in range(1, worksheet.max_row + 1):
+        source = worksheet.cell(row=row, column=cost_col)
+        target = worksheet.cell(row=row, column=total_col)
+        target._style = copy(source._style)
+        clear_yellow(target)
+    worksheet.cell(row=1, column=total_col).value = "总成本价"
+    width = worksheet.column_dimensions[
+        openpyxl.utils.get_column_letter(cost_col)
+    ].width
+    worksheet.column_dimensions[
+        openpyxl.utils.get_column_letter(total_col)
+    ].width = width
+    return total_col
 
 
 def process(fill_path, cost_path):
@@ -441,6 +463,15 @@ def process(fill_path, cost_path):
         if not real_indices:
             clear_yellow(cost_cell)
             summary["无真实SKU跳过行"] += 1
+            # 店铺SKU为 -- 但导出已带成本时，整单成本仍要进入总成本价。
+            placeholder_total = round(
+                sum(value for value in number_lines(cost_cell.value) if value), 2
+            )
+            if placeholder_total and total_cell.value is None:
+                total_cell.value = placeholder_total
+                total_cell.number_format = "0.00"
+                total_sum += placeholder_total
+                summary["已填总成本价行"] += 1
             continue
 
         quantities = quantity_lines(
