@@ -674,13 +674,14 @@ def prepare_output(file_path, out_dir):
     suffix = 1
     while os.path.exists(output_path):
         try:
-            os.chmod(output_path, stat.S_IWRITE)
+            # Windows 用 S_IWRITE 去掉只读标志；Mac/Linux 需同时保留读权限
+            os.chmod(output_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
             os.remove(output_path)
         except PermissionError:
             output_path = os.path.join(out_dir, f'新_{stem}_修正版{suffix}{ext}')
             suffix += 1
     shutil.copy2(file_path, output_path)
-    os.chmod(output_path, stat.S_IWRITE)
+    os.chmod(output_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
     return output_path
 
 

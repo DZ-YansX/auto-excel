@@ -112,7 +112,8 @@ def copy_as_empty(source_path, file_name):
     file_output = os.path.join(OUTPUT_FOLDER, new_file_name)
     try:
         shutil.copy(source_path, file_output)
-        os.chmod(file_output, stat.S_IWRITE)
+        # Windows 用 S_IWRITE 去掉只读标志；Mac/Linux 需同时保留读权限
+        os.chmod(file_output, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
     except Exception as e:
         print(f"   [错误] 空文件生成副本失败: {e}")
 
@@ -332,7 +333,7 @@ def process_single_file(source_path, cost_map):
     print(f"   正在生成副本并进行写表操作...")
     try:
         shutil.copy(source_path, file_output)
-        os.chmod(file_output, stat.S_IWRITE)
+        os.chmod(file_output, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
         time.sleep(1)
     except Exception as e:
         print(f"   [错误] 复制失败: {e}")

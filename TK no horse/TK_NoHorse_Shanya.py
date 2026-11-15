@@ -375,7 +375,8 @@ def copy_to_output(source_path):
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
     out_path = os.path.join(OUTPUT_FOLDER, f'新_{os.path.basename(source_path)}')
     shutil.copy(source_path, out_path)
-    os.chmod(out_path, stat.S_IWRITE)   # 源文件可能是只读的
+    # Windows 用 S_IWRITE 去掉只读标志；Mac/Linux 需同时保留读权限
+    os.chmod(out_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)   # 源文件可能是只读的
     return out_path
 
 
