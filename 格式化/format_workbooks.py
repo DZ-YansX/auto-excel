@@ -24,8 +24,11 @@ SHEET_NAMES = {
 }
 EMPTY_SHEETS = ("bill", "order", "ads", "makeup", "big_seller")
 CANCEL_TYPES = ("取消未发货", "取消已发货")
-CELL_XML = re.compile(rb'<c\b(?P<attrs>[^>]*)>(?P<body>.*?)</c>')
+# openpyxl 写出的 XML 随是否安装 lxml 而不同：<c></c> / <c />，<v></v> / <v />
+CELL_XML = re.compile(rb'<c\b(?P<attrs>[^>]*?)(?:/>|>(?P<body>.*?)</c>)')
 CELL_REF = re.compile(rb'\br="([^"]+)"')
+EMPTY_CELL_END = re.compile(rb'\s*(?:/>|></c>)$')
+EMPTY_VALUE = re.compile(rb'<v></v>|<v\s*/>')
 FORMULA_REF = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)")
 
 
@@ -242,16 +245,17 @@ def patch_saved_file(path, workbook, cached_workbook):
                 return match.group(0)
             ref = ref_match.group(1).decode("ascii")
             cell = match.group(0)
+            body = match.group("body") or b""
             if ref in explicit_styles and not re.search(rb'\bs=', match.group("attrs")):
                 cell = cell.replace(b"<c", f'<c s="{explicit_styles[ref]}"'.encode("ascii"), 1)
-            if ref in empty_refs and b't="inlineStr"' in match.group("attrs") and not match.group("body"):
-                return cell.replace(b"></c>", b"><is><t></t></is></c>")
-            if ref in cached_values and b"<f" in match.group("body"):
+            if ref in empty_refs and b't="inlineStr"' in match.group("attrs") and not body:
+                return EMPTY_CELL_END.sub(b"><is><t></t></is></c>", cell)
+            if ref in cached_values and b"<f" in body:
                 value = cached_values[ref]
                 if isinstance(value, bool):
                     value = int(value)
                 encoded = (format(value, ".15g") if isinstance(value, float) else str(value)).encode("utf-8")
-                return cell.replace(b"<v></v>", b"<v>" + encoded + b"</v>", 1)
+                return EMPTY_VALUE.sub(lambda _: b"<v>" + encoded + b"</v>", cell, count=1)
             return cell
 
         return CELL_XML.sub(replace, data)
